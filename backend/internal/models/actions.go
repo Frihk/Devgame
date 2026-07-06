@@ -35,5 +35,4 @@ const (
 	ActionSubmitBid ActionType = "submit_bid"
 
 	// Liquidation / raise-cash actions -- rulebook Section 9, addendum Section 2.3
-	ActionRaiseCash ActionType = "raise_cash"
-)gi
+)
