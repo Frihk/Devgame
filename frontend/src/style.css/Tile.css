@@ -1,0 +1,92 @@
+.tile-base {
+  border: 1px solid #1e293b;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background-color: #f8fafc;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+
+.tile-base:hover {
+  background-color: #f1f5f9;
+}
+
+.tile-content {
+  width: 100%;
+  height: 100%;
+}
+
+.property-layout {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+.property-color-bar {
+  border: 1px solid #1e293b;
+}
+
+.property-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px;
+  font-size: 0.65rem;
+  font-weight: bold;
+  text-align: center;
+  flex-grow: 1;
+}
+
+.property-layout.side-bottom { flex-direction: column; }
+.property-layout.side-bottom .property-color-bar { height: 20%; width: 100%; border-bottom: 2px solid #1e293b; }
+
+.property-layout.side-top { flex-direction: column-reverse; }
+.property-layout.side-top .property-color-bar { height: 20%; width: 100%; border-top: 2px solid #1e293b; }
+
+.property-layout.side-left { flex-direction: row-reverse; }
+.property-layout.side-left .property-color-bar { width: 20%; height: 100%; border-left: 2px solid #1e293b; }
+
+.property-layout.side-right { flex-direction: row; }
+.property-layout.side-right .property-color-bar { width: 20%; height: 100%; border-right: 2px solid #1e293b; }
+
+.event-layout {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+  padding: 6px;
+  text-align: center;
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+
+.icon-chance { font-size: 1.5rem; color: #dc2626; font-family: serif; }
+.icon-chest { font-size: 1.2rem; }
+.icon-tax { font-size: 1.2rem; }
+.icon-go { font-size: 1.5rem; color: #16a34a; }
+
+.tile-tokens {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+  pointer-events: none; 
+}
+
+.player-token {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}

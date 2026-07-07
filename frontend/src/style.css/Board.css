@@ -1,0 +1,29 @@
+.monopoly-board-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #e2e8f0; 
+}
+
+.monopoly-board {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(11, 1fr);
+  
+  width: 90vmin;  
+  height: 90vmin; 
+  background-color: #bfdbfe; 
+  border: 3px solid #0f172a;
+  position: relative;
+}
+
+.board-center {
+  grid-column: 2 / 11;
+  grid-row: 2 / 11;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background-color: #f8fafc;
+}

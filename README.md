@@ -1,4 +1,4 @@
-#  Reddit Monopoly Rush
+# Monopoly Devgame
 
 A fast-paced, strategy-based board game inspired by the core mechanics of Monopoly, built for the **Reddit Games Hackathon 2026** using **Phaser**, **Go**, and **JavaScript**.
 
@@ -6,7 +6,7 @@ Unlike traditional Monopoly, this game focuses on quick matches, dynamic events,
 
 ---
 
-##  Overview
+## Overview
 
 Players compete to build the most valuable city by buying businesses, upgrading properties, completing challenges, and adapting to random events.
 
@@ -14,7 +14,7 @@ Each match is designed to be short, engaging, and highly replayable.
 
 ---
 
-##  Features
+## Features
 
 - Dice-based movement
 - Buy and upgrade businesses
@@ -52,7 +52,7 @@ Each match is designed to be short, engaging, and highly replayable.
 
 ---
 
-##  Project Structure
+## Project Structure
 
 ```
 reddit-monopoly/
@@ -74,7 +74,7 @@ reddit-monopoly/
 
 ---
 
-##  Frontend
+## Frontend
 
 ```
 frontend/
@@ -88,7 +88,7 @@ frontend/
 
 ---
 
-##  Backend
+## Backend
 
 ```
 backend/
@@ -101,7 +101,7 @@ backend/
 
 ---
 
-##  Gameplay
+## Gameplay
 
 1. Roll the dice.
 2. Move around the board.
@@ -113,23 +113,25 @@ backend/
 
 ---
 
-##  Objective
+## Objective
 
 Become the wealthiest player before the match timer expires by making smart investments and strategic decisions.
 
 ---
 
-##  Team
+## Team
 
 | Name | Role |
 |------|------|
-| Emmaculate Akinyi, Quinton Juma and Ashley Omondi | Frontend |
-| Sospeter Kinyanjui, Ian Kimani and Evans Juma | Backend |
-| Ian Kimani | UI/UX |
-| All team members| Assets & Testing |
+| Emmaculate Akinyi and Ashley Omondi | Frontend |
+| Evans, Sospeter, | Backend |
+| Member 3 | Game Logic |
+| Member 4 | UI/UX |
+| Member 5 | Assets & Testing |
+
 ---
 
-##  Installation
+## Installation
 
 ### Clone the repository
 
@@ -159,7 +161,7 @@ go run ./cmd/server
 
 ---
 
-##  API
+## API
 
 The backend exposes REST endpoints for:
 
@@ -171,7 +173,7 @@ The backend exposes REST endpoints for:
 
 ---
 
-##  Assets
+## Assets
 
 Game assets are located in:
 
@@ -192,7 +194,7 @@ Including:
 
 ---
 
-##  Documentation
+## Documentation
 
 Additional documentation can be found in:
 
@@ -211,7 +213,7 @@ Including:
 
 ---
 
-##  Git Workflow
+## Git Workflow
 
 Create a feature branch before starting work:
 
