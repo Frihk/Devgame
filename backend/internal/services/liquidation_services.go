@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"sync"
 
 	"Devgame/backend/internal/models"
@@ -42,4 +43,41 @@ func (s *LiquidationService) CheckLiquidationCapacity(player *models.PlayerState
 	}
 
 	return maxCashRaised
+}
+
+// DeclareBankruptcy processes total insolvency, stripping player assets.
+func (s *LiquidationService) DeclareBankruptcy(player *models.PlayerState, playerProperties []*models.PropertyState, creditorID *string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Safety Check: If they can survive by liquidating assets, don't let them quit yet
+	maxCapacity := s.CheckLiquidationCapacity(player, playerProperties)
+	if maxCapacity >= 0 {
+		return errors.New("cannot declare bankruptcy; player still has sufficient assets to liquidate and cover debt")
+	}
+
+	// 2. Asset Wipeout Loop
+	for _, prop := range playerProperties {
+		if prop.OwnerID != nil && *prop.OwnerID == player.ID {
+			// Clear developments completely
+			prop.LodgeCount = 0
+
+			if creditorID != nil {
+				// Hand the property directly to the player they owe money to
+				prop.OwnerID = creditorID
+				// The rulebook states properties transferred via bankruptcy retain their mortgage state,
+				// but the new owner must immediately pay a fee (handled in later processing)
+			} else {
+				// Money was owed to the bank/game environment; return property to the open market
+				prop.OwnerID = nil
+				prop.Mortgaged = false
+				prop.LockedByDealID = nil
+			}
+		}
+	}
+
+	// 3. Flag the player as completely eliminated
+	player.Cash = 0
+
+	return nil
 }
