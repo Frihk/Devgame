@@ -1,186 +1,341 @@
-# Wekonomy (Reddit Monopoly Rush) — Team & Roles
+# Wekonomy (Reddit Monopoly Rush) — Architecture
 
-Maps the team roster against the subsystems in `ARCHITECTURE.md`: who owns
-which files, who depends on whom, and what order work needs to happen in.
+**Status:** v1.1 — targets full rulebook spec (wekonomy-rulebook.md + deals/mortgages/lodges addendum)
+**Changelog from v1.0:** Section 3.2 handler-layer ownership clarified and completed (jail/trade/auction/lobby were previously missing handler homes — see 3.2a–3.2c).
 
----
+This document describes how the system is put together: process model, real-time architecture, persistence, and how the existing directory structure maps to responsibilities. It assumes the rulebook and addendum as the source of truth for game rules; this doc is the source of truth for how those rules are implemented.
 
-## 1. Roster
+## 1. Guiding Principles
 
-| Name | Area | Owns |
+**Server is the only authority.** The Go backend owns all game state. The Phaser client never computes rent, ownership, or legality of a move — it sends intents (`roll_dice`, `buy_property`, `submit_bid`, …) and renders whatever state the server broadcasts back. This isn't optional given Section 12 of the rulebook explicitly calls out that client-submitted actions must never be trusted at face value.
+
+**One game = one serialized stream of commands.** Concurrency bugs in a game with trading, jail, auctions, and forced liquidation all potentially firing near-simultaneously are the biggest risk in this project. We avoid them structurally (Section 3) rather than with fine-grained locking.
+
+**`shared/` is a contract, not a convenience.** Anything in `shared/enums`, `shared/constants`, `shared/schemas` must have a matching Go type. Drift between the JS shape and the Go shape is the #1 source of "works locally, breaks in the room" bugs in real-time games. See Section 6.
+
+**REST for anything that happens before or after a game. WebSocket for everything that happens during one.** Auth, lobby creation, leaderboard — REST. Dice rolls, trades, rent, jail, auctions — WebSocket only.
+
+## 2. System Overview
+
+```
+┌─────────────────┐        REST (auth, lobby, leaderboard)       ┌──────────────────┐
+│                  │ ───────────────────────────────────────────▶│                  │
+│  Phaser Client   │                                              │   Go Backend     │
+│  (frontend/src)  │        WebSocket (single conn / player)      │  (backend/*)     │
+│                  │ ◀────────────────────────────────────────────▶│                  │
+└─────────────────┘          game commands / state broadcasts      └────────┬─────────┘
+                                                                             │
+                                                                    ┌────────▼─────────┐
+                                                                    │  Room Registry    │
+                                                                    │  (in-memory)      │
+                                                                    │  1 goroutine per  │
+                                                                    │  active game       │
+                                                                    └────────┬─────────┘
+                                                                             │ write-behind
+                                                                    ┌────────▼─────────┐
+                                                                    │  SQLite            │
+                                                                    │  (snapshots, log,  │
+                                                                    │   leaderboard)     │
+                                                                    └────────────────────┘
+```
+
+## 3. Backend Architecture
+
+### 3.1 Concurrency model — the Room Actor pattern
+
+Each active game room is a single goroutine ("room actor") owning a `GameState` struct. It reads a single `chan Command` and processes commands one at a time, in arrival order. Nothing else is allowed to mutate `GameState` directly.
+
+```go
+// internal/services/game_room.go (new file)
+type Command struct {
+    PlayerID string
+    Type     string          // "roll_dice", "buy_property", "submit_trade", ...
+    Payload  json.RawMessage
+    Reply    chan Result      // used for request/response-style acks if needed
+}
+type Room struct {
+    ID       string
+    State    *models.GameState
+    Inbox    chan Command
+    Timers   *RoomTimers       // turn timer, intercept timer, auction timer
+    Broadcast func(event WSEvent) // fan-out to all connected sockets in this room
+}
+func (r *Room) Run() {
+    for cmd := range r.Inbox {
+        result := r.dispatch(cmd)   // routes into the relevant service
+        r.Broadcast(result.Events)  // e.g. player_moved, rent_paid, trade_finalized
+    }
+}
+```
+
+Why this over a mutex-guarded shared struct: the rulebook has several flows that are inherently multi-step and interleaved with other players' actions — trade intercept windows (Section 6.3) run concurrently with the active player's turn, jail allows trading/mortgaging on other players' turns (addendum 1.2/2.1), and liquidation can be triggered by another player landing on you. A single serialized command queue makes "is this action legal right now" a simple sequential check against `GameState`, instead of a distributed-locking problem across trade timers, turn timers, and auction timers.
+
+Timers (turn timer, intercept countdown, auction countdown, sniper extensions) are implemented as goroutines that, on expiry, push a synthetic `Command` (e.g. `{Type: "turn_timer_expired"}`) into the room's own inbox — they never touch `GameState` directly. This keeps the "one writer" guarantee intact even for time-driven state transitions like Section 3.7 (auto-resolve via Bankruptcy/Liquidation on timer expiry) or 6.3's sniper protection.
+
+### 3.2 Directory mapping
+
+| Existing path | Responsibility |
+|---|---|
+| `cmd/server/main.go` | Process entrypoint: load config, open SQLite, start HTTP+WS server, start RoomRegistry |
+| `internal/handlers/*` | Decode inbound WS frames into typed `Command`, validate payload shape, reject malformed input before it reaches `Room.Inbox`. REST handlers (auth, leaderboard, player profile, lobby) stay REST. No business logic lives here — see 3.2a. |
+| `internal/middleware/*` | Unchanged — auth (JWT/session), CORS, logging, panic recovery. Recovery middleware is important here: a panic inside a room actor's command loop must not kill the goroutine silently — wrap `dispatch()` in a `recover()` that converts panics into an `action_failed` event + logs, rather than crashing the room |
+| `internal/models/*` | Pure data structs mirroring `shared/schemas/*`. `game.go` becomes the home of `GameState`, `TurnState`, `JailState`, `PendingDeal`, `PendingAuction` |
+| `internal/repository/*` | SQLite read/write. Not called during live gameplay hot path — only on: game creation, periodic snapshot (e.g. every N turns or every trade/bankruptcy), and game end |
+| `internal/services/*` | The actual rule engine — this is where rulebook Sections 4–10 live in code, including `dispatch()` (see 3.2a). New files `game_room.go` (Room Actor) and `room_registry.go` (map of active rooms) added here |
+| `internal/database/schema.sql` | Extended per Section 3.7 below |
+| `shared/*` | JS-side mirror of enums/constants/schemas — Go types in `internal/models` must match field-for-field |
+
+### 3.2a — Handler layer: decode/validate vs. business dispatch
+
+These are two distinct responsibilities that must not blur:
+
+- **`internal/handlers/*`** — decodes inbound WS frames into typed `Command{PlayerID, Type, Payload}`, validates payload shape, rejects malformed input before it ever reaches `Room.Inbox`. No service calls, no business logic.
+- **`internal/services/game_room.go` (`Room.dispatch()`)** — the single place that switches on `Command.Type` and calls into the relevant service (`turn_service.go`, `property_service.go`, `jail_service.go`, etc).
+
+Every domain that receives player-issued commands needs a handler file for decode/validation — including domains not covered in v1.0.
+
+### 3.2b — Handler file ownership (complete)
+
+| File | Status | Commands decoded | Owner | Rationale |
+|---|---|---|---|---|
+| `auth.go` | existing | REST: register, login | Ian | pairs with his auth/middleware wiring |
+| `leaderboard.go` | existing | REST: get leaderboard | Ian | reads SQLite, no service dependency |
+| `player.go` | existing | REST: get player profile | Ian | same as above |
+| `lobby.go` | **new** | REST: `create_lobby`, `join_lobby` | Ian | wires directly into `room_registry.go`, which is his |
+| `game.go` | existing | `roll_dice`, `end_turn` | Sospeter | mirrors `turn_service.go` |
+| `property.go` | existing | `buy_property`, `decline_property`, `mortgage_property`, `unmortgage_property`, `build_lodge`, `sell_lodge` | Sospeter (read-path) / Evans (write-path) | mirrors existing `property_service.go` split |
+| `event.go` | existing, scope narrowed | none (inbound) — outbound formatting only for `card_drawn` broadcasts | Sospeter | cards are server-triggered on landing, not player commands; not a router in the same sense as the others |
+| `jail.go` | **new** | `pay_bail`, `use_jail_free_card` (release-by-roll rides on `roll_dice`, no new command) | Sospeter | mirrors `jail_service.go` |
+| `trade.go` | **new** | `propose_trade`, `respond_trade` (accept/counter/reject via action field), `submit_intercept_offer`, `cancel_trade` | Evans | mirrors `trade_service.go` |
+| `auction.go` | **new** | `submit_bid`, `pass_bid` | Evans | mirrors `auction_service.go` |
+
+### 3.2c — Principle going forward
+
+Handler file ownership always mirrors service file ownership. If a new service is added, its handler file is owned by whoever owns the service — no shared/ambiguous handler files.
+
+### 3.3 REST API surface (unchanged pattern, narrowed scope)
+
+Only things that happen outside an active game:
+
+- `POST /auth/register`, `POST /auth/login` — `auth_service.go`
+- `POST /lobby/create`, `POST /lobby/:id/join` — `lobby.go`, thin layer over `game_service.go`, returns a WS connection token scoped to that room
+- `GET /leaderboard` — `leaderboard_service.go`, reads from SQLite
+- `GET /player/:id` — profile/history, reads from SQLite
+
+Everything else (dice, purchase, trade, mortgage, lodge build, auction bid, jail actions) moves to WebSocket commands, not REST endpoints — a REST call per dice roll doesn't fit a system with 20s intercept windows and sniper-protection timers that need to push unsolicited state to all players, not just the one who acted.
+
+### 3.4 WebSocket architecture
+
+Connection lifecycle:
+
+1. Client connects to `/ws/game/:roomID?token=...` (gorilla/websocket upgrade)
+2. Token (issued by `POST /lobby/:id/join`) is validated, resolved to `(playerID, roomID)`
+3. Connection registered with the Room's socket set; a `player_connected` event (not in the rulebook's list but needed operationally) is broadcast
+4. All inbound frames are decoded into `Command{PlayerID, Type, Payload}` (by the relevant file in `internal/handlers/*`, per 3.2a/3.2b) and pushed onto `Room.Inbox`
+5. All outbound frames are `WSEvent{Type, Payload, RoomID}` from the rulebook's Section 12 catalog (see Section 7 of this doc)
+
+Message envelope (both directions), matches `shared/schemas`:
+
+```json
+{
+  "type": "buy_property",
+  "payload": { "propertyId": 6 },
+  "clientMsgId": "uuid-for-optimistic-UI-reconciliation"
+}
+```
+
+Server broadcasts wrap the same shape but always include `roomId` and a monotonically increasing `seq` per room, so a reconnecting client can request "replay from seq N" instead of a full state resync — useful given turn timers keep running even if one player's socket drops (rulebook doesn't special-case disconnection, so the default here is: disconnection does not pause the game; a disconnected player is treated as unresponsive and their turn timer runs out normally, triggering the same auto-resolve flow as Section 3.7).
+
+Private negotiation rooms (Section 6.2) reuse the same WS connection — they are not a separate socket. A `PendingDeal` (pre-broadcast) is scoped server-side to the two participant IDs, and the Room only relays `trade_offer_updated` events to those two connections until both accept, at which point it becomes a room-wide broadcast (Section 6.3). This avoids managing a second connection type for something that's really just a visibility filter on the existing broadcast.
+
+### 3.5 Domain services (rule engine)
+
+Each maps directly to a rulebook section — this is deliberate so a rule change in the design doc has an obvious single file to change:
+
+| Service | Rulebook section(s) | Key responsibility |
 |---|---|---|
-| Emmaculate Akinyi | Frontend | Board & board-driven UI |
-| Ashley Omondi | Frontend + PM | Scenes, HUD, modals — plus project coordination |
-| Sospeter Kinyanjui | Backend | Core turn loop & board resolution — plus shared contracts |
-| Ian Kimani | Backend + UI/UX | Room/WS plumbing & infra — plus UI/UX direction |
-| Evans Juma | Backend | Economic subsystems (trading, auctions, liquidation) |
-| Quinton | Full stack + QA | WS client, cross-stack QA |
+| `turn_service.go` | 3 | Dice roll, doubles tracking (incl. 3x-doubles→jail), turn timer, end-turn |
+| `board_service.go` | 4 | Square resolution dispatch by square type |
+| `property_service.go` | 4.1–4.3, 7, 8 | Buy/rent/mortgage/lodge logic, even-building enforcement |
+| `card_service.go` | 4.5 | Chance/Community Chest deck state, draw, effect execution |
+| `jail_service.go` | 5 | `in_jail` state machine, release conditions, 3-turn cap |
+| `trade_service.go` | 6, addendum §1 | Negotiation room, broadcast/intercept/sniper, validation (addendum 1.1, 1.4) |
+| `liquidation_service.go` | 9 | Forced mortgage/lodge-sell flow, bankruptcy, asset transfer |
+| `auction_service.go` | 10 | Ascending bid, sniper-protection reset, close |
 
-Assets (board art, sprites, icons, SFX) has no current owner — flagged in
-Section 5.
+`property_service.go` is deliberately the biggest file — mortgaging (§8), lodge building (§7), and the addendum's "Raise Cash to afford a purchase" flow (addendum §2.3) all touch the same property-ownership + cash invariants and are easiest to keep consistent in one place rather than split across files that each re-derive "can this property be mortgaged right now."
 
----
+Cross-cutting lock addendum rules that don't map to one service:
 
-## 2. Build order — who blocks whom
+- A property attached to a `pending_deal` is mortgage- and build-locked (addendum §2.2, §3.2). Implemented as a `LockedBy *string` field on the property's in-memory state, set when a `PendingDeal` referencing it is created and cleared when that deal resolves or is rejected — checked by both `property_service.go` and `trade_service.go`.
+- A deal cannot finalize while either party is mid-liquidation (addendum §1.2). Implemented as a `player.Status` enum check (`normal | liquidating | bankrupt`) that `trade_service.go` consults before allowing the intercept timer to close out.
+
+### 3.6 State machine summary
 
 ```
-Phase 0 (foundation — everyone else waits on this)
-  Sospeter → shared/ contracts (enums, schemas)      ─┐
-  Ian      → Room Actor skeleton (game_room.go,        ├─ must exist first
-             room_registry.go, WS upgrade handler)    ─┘
-
-Phase 1 (parallel, once Phase 0 lands)
-  Sospeter → turn/board services      ─┐
-  Evans    → economic services        ─┤  build against Ian's Room Actor +
-  Emmaculate/Ashley → scenes, board,  ─┘  Sospeter's shared contracts
-             UI (can start against
-             mocked WS events before
-             backend is fully wired)
-
-Phase 2 (integration)
-  Real WS events flowing end-to-end: Sospeter/Evans's services emit real
-  events → Quinton's gameService.js receives them → Emmaculate/Ashley's
-  managers render them. This is where mismatches between shared/ and the
-  Go models actually surface.
-
-Ongoing
-  Quinton's QA runs throughout, but concentrates once Phase 2 starts —
-  can't meaningfully test trade intercept or liquidation flows until
-  they're wired end-to-end.
+GameState.Phase:      lobby → in_progress → ended
+TurnState.Phase:      awaiting_roll → resolving_square → free_action → ended
+PlayerState.Status:   active → (jailed | liquidating)* → active | eliminated
+PendingDeal.Phase:    negotiating → broadcast → intercept → finalized | rejected | failed
+PendingAuction.Phase: open → closed
 ```
 
-**Practical takeaway:** Ian and Sospeter should be first to commit
-something, even a stub. Everyone else's estimates should assume that
-scaffolding exists, not that they build it themselves mid-task.
+\* a jailed player can simultaneously be in `liquidating` if a rent/tax debt hits them while jailed (rulebook §5 explicitly allows jailed players to receive rent and be otherwise economically active).
 
----
+### 3.7 Persistence (SQLite)
 
-## 3. Backend
+SQLite is not on the hot path of gameplay — every dice roll hitting disk would be both slow and unnecessary. Split responsibility:
 
-### Sospeter — core turn loop & board resolution, plus shared contracts
-- `internal/services/turn_service.go` — dice, doubles tracking, turn timer
-- `internal/services/board_service.go` — square-type dispatch
-- `internal/services/card_service.go` — Chance/Community Chest deck + effects
-- `internal/services/jail_service.go` — jail state machine
-- `shared/*` — enum/schema parity against `internal/models/*` (Phase 0 — this blocks Evans, Quinton, and Emmaculate/Ashley, so it goes first)
-- Emits: `player_moved`, `dice_rolled`, `turn_started/ended`, `card_drawn`, `player_jailed/released`
-- Depends on: Ian's Room Actor (dispatch loop must exist to call into this)
-- Shares `property_service.go` with Evans — see note below
+- **In-memory (`Room.State`)**: authoritative during an active game. Lost on server restart — acceptable for a hackathon scope; noted as a follow-up otherwise (see Open Items).
+- **SQLite writes happen at:**
+  - Game creation (row in `games`)
+  - Every finalized economic event — `trade_finalized`, `property_purchased`, `player_bankrupt`, `lodge_built/sold`, `player_eliminated` — appended to an `activity_log` table (also serves rulebook §11's `recent_activity` requirement directly)
+  - Game end (final snapshot + leaderboard update)
 
-### Evans — economic subsystems
-- `internal/services/trade_service.go` — negotiation, broadcast/intercept, sniper protection
-- `internal/services/auction_service.go` — ascending bid, sniper reset
-- `internal/services/liquidation_service.go` — forced liquidation, bankruptcy, mortgage-to-buy
-- `internal/services/property_service.go` — leads on mortgage/lodge/even-building rules
-- Emits: `trade_*`, `auction_*`, `player_bankrupt/eliminated`, `lodge_built/sold`, `property_mortgaged/unmortgaged`
-- Depends on: Ian's Room Actor; Sospeter's board resolution for square-landing triggers into property logic
+Suggested schema additions to `schema.sql` (kept intentionally close to the existing `models/*` set — `game.go`, `player.go`, `property.go`, `event.go`, `leaderboard.go`):
 
-**`property_service.go` split:** Sospeter owns "is this square resolvable,
-what's rent right now" (read path); Evans owns "can this mutation happen"
-(mortgage/build/sell — write path). Agree on that function boundary before
-either starts, so it's not two people editing the same functions.
+```sql
+-- extends existing schema.sql
+CREATE TABLE IF NOT EXISTS games (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,           -- lobby | in_progress | ended
+    win_condition TEXT NOT NULL,    -- bankruptcy | net_worth
+    started_at DATETIME,
+    ended_at DATETIME
+);
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id TEXT NOT NULL REFERENCES games(id),
+    seq INTEGER NOT NULL,           -- matches WS broadcast seq for replay
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS game_snapshots (
+    game_id TEXT NOT NULL REFERENCES games(id),
+    seq INTEGER NOT NULL,
+    state_json TEXT NOT NULL,       -- full GameState serialization
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (game_id, seq)
+);
+```
 
-### Ian — room/WS plumbing & infra, plus UI/UX direction
-- `internal/services/game_room.go` — Room Actor: command channel, dispatch loop, panic recovery
-- `internal/services/room_registry.go` — active room lifecycle
-- `cmd/server/main.go`, `internal/middleware/*` — WS upgrade, auth wiring, CORS, logging
-- `internal/database/*` — SQLite write-behind (activity log, snapshots)
-- UI/UX, specific responsibilities:
-  - Visual direction and design system: color palette, typography, spacing
-    rules that Emmaculate/Ashley implement against (per the Figma tooling
-    already in the README) — a design system, not per-screen mockups
-    handed over piecemeal
-  - Wireframes for the trade negotiation UI (private room + broadcast/
-    intercept countdown) before Ashley builds it — this is the one UI
-    surface with no existing scaffolding to work from
-  - Board tile and HUD visual layout: how property color groups, rent
-    tiers, and lodge counts read at a glance — informs both Emmaculate's
-    tile rendering and the `assets/tiles`/`assets/buildings` art direction
-  - Modal/popup consistency across `buymodal.js`, `upgrademodal.js`, and
-    the liquidation/raise-cash screen (addendum §2.3) so a player doesn't
-    have to relearn the UI for each decision type
-  - First input on the assets-gap decision (Section 6) if the team goes
-    with in-house art — style guide for whoever produces it
-  - This is design direction feeding Emmaculate/Ashley's implementation,
-    not competing code ownership over `frontend/src/*`
-- Blocks: Sospeter and Evans — their services can't run without a dispatch loop to plug into
-- Depends on: nothing upstream — this is Phase 0 work
+`activity_log` + periodic `game_snapshots` together give cheap crash recovery: reload latest snapshot, replay log entries after its `seq`.
 
----
+## 4. Frontend Architecture (Phaser)
 
-## 4. Frontend
+### 4.1 Scene flow
 
-### Emmaculate — board & board-driven UI
-- `frontend/src/board/*` — `Board.js`, `Tile.js`, `PropertyTile.js`, `EventTile.js`
-- `frontend/src/player/*` — `movement.js`, `dice.js`, token rendering
-- Consumes: `player_moved`, `dice_rolled`, `card_drawn`, ownership-marker updates
-- Can start against mocked events in Phase 1; needs real backend events for Phase 2 integration
+```
+BootScene → PreloadScene → MenuScene → LobbyScene → GameScene → ResultScene
+```
 
-### Ashley — scenes, HUD, modals + project management
-- `frontend/src/scenes/*` — full scene flow (Boot → Preload → Menu → Lobby → Game → Result)
-- `frontend/src/ui/*` — `HUD.js`, `buymodal.js`, `upgrademodal.js`, `notification.js`, `diceUI.js`
-- `frontend/src/manager/*` — `TurnManager.js`, `EconomyManager.js`, `EventManager.js` (reducers over server events, not local rule logic)
-- Owns the trade negotiation UI (private room + broadcast/intercept countdown) — new UI, not in current scaffolding
-- Can start against mocked events in Phase 1; needs real backend events for Phase 2 integration
+Unchanged from existing structure — `LobbyScene` is where the REST `lobby/create|join` calls happen and the WS connection is opened, handing off to `GameScene` once `game_started` (or equivalent) arrives.
 
-**PM responsibilities, specific to this project's shape:**
-- Owns the Phase 0 → 1 → 2 timeline in Section 2 — confirms Ian and
-  Quinton's scaffolding has actually landed before treating Phase 1 as
-  unblocked, rather than everyone assuming it's ready
-- Tracks the `property_service.go` split between Sospeter and Evans — that
-  boundary (read path vs. write path) is agreed once, up front, and PM is
-  the one who notices if it's drifting
-- Calls the open items in `ARCHITECTURE.md` §10 (rent multiplier tables,
-  Direct Trade vs. intercept, win condition mode, Free Parking rule, card
-  list) — these block Sospeter and Evans from finishing specific services
-  and need a design decision, not more engineering time
-- Owns the assets gap decision (Section 6 below) — someone has to actually
-  pick one of the three options rather than it staying open indefinitely
-- Given the hackathon deadline, owns any scope-cut calls (e.g. trimming
-  intercept/sniper trading if Phase 2 integration is running late)
+### 4.2 Manager layer (frontend/src/manager/*)
 
----
+These become pure reducers over server events, not local rule engines:
 
-## 5. Quinton — full stack + QA
+- **`TurnManager.js`** — tracks whose turn it is, turn timer display, enables/disables the local player's action buttons. Never decides whether an action is legal — it just reflects `turn_started/turn_ended/turn_timer_extended`.
+- **`EconomyManager.js`** — tracks cash/property ownership for HUD rendering, driven entirely by `property_purchased`, `rent_paid`, `tax_paid`, `lodge_built/sold`, `property_mortgaged/unmortgaged`, `trade_finalized`.
+- **`EventManager.js`** — Chance/Community Chest card draw animations, driven by `card_drawn`.
 
-- `frontend/src/services/gameService.js` — WebSocket client: command sending, event subscription, reconnect/replay-from-seq
-- Depends on: Sospeter's `shared/*` contracts (Phase 0) and Ian's Room Actor being in place before this can talk to a real backend
-- `docker-compose.yml` — keeps frontend/backend/SQLite volume config working as the two sides evolve; first point of contact if "works on my machine" comes up
-- `Makefile`(s) — wraps the install/build/run/test commands for both `frontend/` and `backend/` into single targets (e.g. `make dev`, `make test`, `make build`) so no one has to remember the exact `npm`/`go` invocations by hand
-- Build/run pipeline: `npm install && npm run dev` (frontend) and `go mod tidy && go run ./cmd/server` (backend) staying reliable as dependencies get added — catches broken installs before they hit someone mid-task
-- Environment/config handling: anything that differs between a dev machine and the demo environment (ports, `.env` values, SQLite file path) gets owned here rather than discovered live at the demo
-- QA scope, specific responsibilities:
-  - **Unit tests (Go):** rulebook edge cases per service — 3x-doubles-to-
-    jail (Sospeter's `turn_service.go`), even-building violations and
-    mortgage-locked-during-pending-deal (Evans's `property_service.go`
-    portion), mortgage payoff failure on trade finalize (addendum §1.4,
-    `trade_service.go`), jail's 3-turn auto-release cap (`jail_service.go`)
-  - **WS contract tests:** every event in `ARCHITECTURE.md` §6's catalog is
-    actually emitted, with the shape Sospeter's `shared/schemas` and
-    `gameService.js` both expect — run this against Sospeter/Evans's
-    services directly, not just through the UI
-  - **Concurrency/integration tests:** scenarios a single-player unit test
-    can't catch — two players submitting `intercept_offer` in the same
-    tick, a player landing on a property mid-liquidation of another player,
-    sniper-protection timer resets stacking correctly (rulebook §6.3.3)
-  - **Manual multiplayer playtesting:** full games run with the whole team,
-    specifically targeting trade negotiation, jail, and bankruptcy flows
-    since those are the highest-complexity/highest-risk paths
-  - **Regression pass before demo/submission:** re-run the above against
-    the final build, not just during development
-  - **Bug triage:** owns the intake point for issues found in playtesting —
-    files them against the right person's files from Sections 3–4 rather
-    than issues floating without an owner
+Each manager subscribes to `gameService.js`'s event emitter rather than polling; `gameService.js` is the single owner of the WebSocket connection and is the only place that knows the wire format.
 
----
+### 4.3 Services layer
 
-## 6. Open gap: assets
+- **`api.js`** — REST calls only (auth, lobby, leaderboard)
+- **`gameService.js`** — WS connection, command sending (`send('buy_property', {...})`), event subscription, reconnect/replay-from-seq logic
+- **`playerService.js`** — thin wrapper for player profile REST calls
 
-`assets/` (board art, character sprites, building icons, cards, SFX) is
-currently all placeholder/empty-byte files, and no one on the roster above
-has it as a primary focus. Three options, in order of how much they cost
-the team's time this cycle:
-- Source it externally (asset pack, freelancer, late addition)
-- Split it thinly across the six people above as a secondary task
-- Scope the visual bar down (flat colors/labeled rects instead of
-  illustrated assets) so no one needs to own an art pipeline at all
+### 4.4 UI modals map directly to server-driven popups
+
+`buymodal.js` and `upgrademodal.js` are triggered by server events, not local square-landing logic — e.g. the server emits a `property_decision_required` event (State 1/State 2/"Raise Cash" variant from addendum §2.3) with the exact set of legal actions the player has right now; the modal renders whatever action set it's given rather than re-deriving affordability client-side. This keeps the "server is the only authority" principle (Section 1) intact even in the UI layer — the client can't be tricked into enabling a buy button the server would reject.
+
+## 5. Shared Contracts (shared/)
+
+`shared/enums`, `shared/constants`, `shared/schemas` are the wire contract. Recommended discipline: generate Go structs from these (or vice versa) at build time rather than hand-maintaining two copies — even for a hackathon, a `propertyLevels.js` enum drifting from its Go counterpart is the kind of bug that only shows up mid-demo. If codegen is too much setup for the timeline, at minimum keep them in adjacent files with a comment cross-referencing the other language's version, and add a cheap CI/test step that fails if the two lists of enum values don't match.
+
+| shared file | Go counterpart |
+|---|---|
+| `enums/gameStatus.js` | `models.GameStatus` |
+| `enums/playerActions.js` | `Command.Type` values in `game_room.go` |
+| `enums/propertyLevels.js` | `models.LodgeTier` |
+| `schemas/gameSchema.js` | `models.GameState` |
+| `schemas/playerSchema.js` | `models.PlayerState` |
+| `schemas/propertySchema.js` | `models.Property` |
+| `constants/tileTypes.js` | `models.SquareType` (Section 2 of rulebook: 8 category types) |
+
+## 6. WebSocket Event Catalog
+
+Directly from rulebook Section 12, grouped by the service that emits them:
+
+| Emits from | Events |
+|---|---|
+| `turn_service.go` | `dice_rolled`, `player_moved`, `turn_started`, `turn_ended`, `turn_timer_extended` |
+| `board_service.go` / `property_service.go` | `property_purchased`, `property_declined`, `rent_paid`, `tax_paid` |
+| `card_service.go` | `card_drawn` |
+| `jail_service.go` | `player_jailed`, `player_released_from_jail` |
+| `trade_service.go` | `trade_proposed`, `trade_accepted_pending_broadcast`, `intercept_offer_submitted`, `trade_finalized`, `trade_intercepted` |
+| `property_service.go` | `lodge_built`, `lodge_sold`, `property_mortgaged`, `property_unmortgaged` |
+| `auction_service.go` | `auction_started`, `auction_bid`, `auction_closed` |
+| `liquidation_service.go` | `player_bankrupt`, `player_eliminated` |
+| room lifecycle | `game_ended`, plus operational (not in rulebook) `player_connected`/`player_disconnected` |
+
+## 7. Subsystem Deep-Dives
+
+### 7.1 Trading & Intercept (rulebook §6, addendum §1)
+
+State lives on the Room, not per-connection:
+
+```go
+type PendingDeal struct {
+    ID           string
+    Proposer     string
+    Counterparty string
+    Terms        TradeTerms
+    Phase        string // negotiating | broadcast | intercept | finalized | rejected | failed
+    LeadingOffer TradeTerms
+    LeadingBidder string
+    Deadline     time.Time
+    LockedPropertyIDs []int // enforced against §2.2/§3.2 build/mortgage locks
+}
+```
+
+Sniper protection (rulebook §6.3.3) is a timer-reset, not a new timer type: on any `intercept_offer` command, if `time.Until(deal.Deadline) < 15s`, push `deal.Deadline = time.Now() + 15s` and emit `turn_timer_extended`-equivalent (trade timer extended — not separately named in the catalog, worth adding as an explicit event if you want the UI to show "extended!" rather than just a ticking number jumping).
+
+Finalization order (addendum §1.4) matters: mortgage payoff check happens after the intercept window closes but before ownership actually transfers, and failure reverts everything atomically — since this all happens inside one `dispatch()` call on the room actor, this is a plain sequential check-then-commit with no separate rollback machinery needed.
+
+### 7.2 Mortgage-to-buy flow (addendum §2.3)
+
+This is the one place the "buy property" popup needs multi-step server round-trips within a single turn: `property_decision_required` (State 2) → client requests "raise cash" panel → `mortgage_property` commands (each re-emits updated running total) → client sends `buy_property` again once affordable, or turn timer / explicit decline routes to `auction_started`. Server enforces the "must complete within the same turn" rule (addendum §2.3) by keying the whole flow to the current `TurnState.turnId`; any `buy_property` command referencing a stale `turnId` is rejected.
+
+### 7.3 Bankruptcy/Liquidation (rulebook §9)
+
+Shares its state shape with the voluntary "raise cash" flow above (same mortgage/sell-lodges primitives), differing only in trigger (forced debt vs. voluntary purchase) and in what happens on failure (auction vs. asset transfer to creditor / bank). Recommend implementing one `liquidation_service.RaiseCash(playerID, targetAmount, voluntary bool)` used by both call sites.
+
+## 8. Security & Validation
+
+- Every command handler in `internal/services/*` re-validates against current `GameState`, never trusts payload-supplied ownership/cash figures (rulebook §12's explicit requirement, addendum §1.1's "validated server-side... not at time of original chat message").
+- JWT/session (existing `middleware/auth.go`) authenticates the WS upgrade, and every inbound `Command.PlayerID` is set server-side from that authenticated identity — never trusted from the payload — so a player can't submit actions as someone else.
+- Rate-limit inbound WS commands per connection (simple token bucket in the connection handler) to prevent a malicious client from flooding a room's Inbox channel.
+
+## 9. Deployment
+
+`docker-compose.yml` (existing) — two services (frontend static build / dev server, backend Go binary) + SQLite as a mounted volume file, no separate DB container needed at this scale.
+
+## 10. Open Items (carried over + architecture-specific)
+
+From the rulebook/addendum (needs design, not engineering, input):
+
+- [ ] Rent multiplier tables for Transport Hubs / Utilities
+- [ ] Whether Direct Trade (§6.1) bypasses intercept entirely
+- [ ] Win condition: Bankruptcy-only vs. optional Net Worth mode
+- [ ] Free Parking house rule on/off default
+- [ ] Full Chance/Community Chest card list
+
+Architecture-specific, needs a decision before/during build:
+
+- [ ] Server restart behavior: acceptable to lose in-progress games for the hackathon, or is snapshot-based recovery on boot in scope?
+- [ ] Reconnect UX: client-side replay-from-seq is designed above but not yet in any handler — worth scoping down to "just show a reconnect spinner and full-resync" if time is tight
+- [ ] Net Worth win-condition mode (if enabled) needs a tie-break rule
