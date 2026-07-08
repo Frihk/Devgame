@@ -46,7 +46,8 @@ func (s *AuctionService) StartAuction(propertyID int) (*models.PendingAuction, e
 }
 
 // PlaceBid processes incoming user bids, validates increments, and handles sniper clock resets.
-func (s *AuctionService) PlaceBid(propertyID int, bidderID string, bidAmount int64) (*models.PendingAuction, error) {
+// PlaceBid processes incoming user bids, validates increments, checks affordability, and handles sniper clock resets.
+func (s *AuctionService) PlaceBid(propertyID int, bidderID string, bidAmount int64, playerCash int64) (*models.PendingAuction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -62,12 +63,22 @@ func (s *AuctionService) PlaceBid(propertyID int, bidderID string, bidAmount int
 		return nil, errors.New("bidding windows have officially closed for this auction")
 	}
 
-	// Rule Check: Must beat the previous bid amount cleanly
+	// Rule Check A: Anti-Self-Bidding Guard
+	if auction.CurrentBidderID != nil && *auction.CurrentBidderID == bidderID {
+		return nil, errors.New("invalid operation: you are already the highest bidder")
+	}
+
+	// Rule Check B: Increment Validation
 	if bidAmount <= auction.CurrentBid {
 		return nil, errors.New("bid must explicitly exceed the current highest bid")
 	}
 
-	// Update auction bid state
+	// Rule Check C: Financial Solvency Check
+	if bidAmount > playerCash {
+		return nil, errors.New("insufficient funds: you cannot place a bid higher than your current liquid cash")
+	}
+
+	// Update auction bid state safely
 	auction.CurrentBidderID = &bidderID
 	auction.CurrentBid = bidAmount
 

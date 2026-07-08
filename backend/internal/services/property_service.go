@@ -8,18 +8,40 @@ import (
 )
 
 type PropertyService struct {
-	mu sync.RWMutex
-	// We map by int since PropertyID matches the 0-39 BoardPosition index
+	mu         sync.RWMutex
 	properties map[int]*models.PropertyState
 }
 
+// NewPropertyService instantiates a new real estate controller.
 func NewPropertyService(initialProperties map[int]*models.PropertyState) *PropertyService {
 	return &PropertyService{
 		properties: initialProperties,
 	}
 }
 
-// BuildLodge handles the Phase 1 structural write-path for adding a building.
+func getColorGroupIDs(id int) []int {
+	// Static mapping based on standard Monopoly board layouts (0-39 positions)
+	groups := [][]int{
+		{1, 3},       // Brown
+		{6, 8, 9},    // Light Blue
+		{11, 13, 14}, // Pink
+		{16, 18, 19}, // Orange
+		{21, 23, 24}, // Red
+		{26, 27, 29}, // Yellow
+		{31, 32, 34}, // Green
+		{37, 39},     // Dark Blue
+	}
+
+	for _, group := range groups {
+		for _, memberID := range group {
+			if memberID == id {
+				return group
+			}
+		}
+	}
+	return nil // If it's a utility or transit hub, return nil
+}
+
 func (s *PropertyService) BuildLodge(propertyID int, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -42,60 +64,42 @@ func (s *PropertyService) BuildLodge(propertyID int, userID string) error {
 	if prop.LockedByDealID != nil {
 		return errors.New("property is currently locked in a pending trade negotiation")
 	}
-	if prop.LodgeCount >= 4 { // Max 4 per rulebook (4 = Luxury Resort)
+	if prop.LodgeCount >= 4 { // Max 4 per rulebook
 		return errors.New("property already reached maximum luxury resort development tier")
 	}
 
-	// 2. Even-Building Rule Checks
-	// Sospeter will provide a way to check color groups via board config,
-	// but for our structural state validation:
-	for _, p := range s.properties {
-		if p.SquareType == models.SquareTypeProperty && p.OwnerID != nil && *p.OwnerID == userID {
-			if p.Mortgaged {
-				return errors.New("cannot build while a property in this color group is mortgaged")
-			}
-			// Target property cannot exceed sister properties by more than 1 building
-			if prop.LodgeCount+1 > p.LodgeCount+1 {
-				return errors.New("must build evenly across all properties in this color group")
-			}
+	// Fetch valid sister property IDs for this color set
+	sisterIDs := getColorGroupIDs(propertyID)
+	if sisterIDs == nil {
+		return errors.New("invalid operation: target square does not belong to a valid buildable color set")
+	}
+
+	// 2. Monopoly Even-Building Rule Checks
+	for _, id := range sisterIDs {
+		sisterProp, exists := s.properties[id]
+		if !exists {
+			return errors.New("critical: sister property missing from game state")
+		}
+
+		// Rule A: Full Monopoly Requirement across the color block
+		if sisterProp.OwnerID == nil || *sisterProp.OwnerID != userID {
+			return errors.New("cannot build until you own the complete color group monopoly")
+		}
+
+		// Rule B: Mortgage Restriction across the set
+		if sisterProp.Mortgaged {
+			return errors.New("cannot build while a sister property in this color group is mortgaged")
+		}
+
+		// Rule C: The Airtight Even-Building Math
+		// Your target's NEXT house count cannot be more than 1 house higher
+		// than any sister property's CURRENT house count.
+		if (prop.LodgeCount + 1) > (sisterProp.LodgeCount + 1) {
+			return errors.New("must build evenly: this choice puts this property too far ahead of its sister properties")
 		}
 	}
 
+	// All checks pass safely! Increment the lodge count.
 	prop.LodgeCount++
-	return nil
-}
-
-// MortgageProperty marks a property as mortgaged to give the player quick liquidity.
-func (s *PropertyService) MortgageProperty(propertyID int, userID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	prop, exists := s.properties[propertyID]
-	if !exists {
-		return errors.New("property tile not found in game state")
-	}
-
-	// 1. Validation Checks
-	if prop.OwnerID == nil || *prop.OwnerID != userID {
-		return errors.New("unauthorized: user does not own this property")
-	}
-	if prop.Mortgaged {
-		return errors.New("property is already mortgaged")
-	}
-	if prop.LockedByDealID != nil {
-		return errors.New("cannot mortgage a property locked in an active trade deal")
-	}
-
-	// 2. Rule Check: You cannot mortgage a property if ANY property in its color group has lodges built
-	// (We check all properties in the game map to see if a sister property still has developments)
-	for _, p := range s.properties {
-		// Sospeter will handle the exact color group logic later, but for state verification:
-		if p.OwnerID != nil && *p.OwnerID == userID && p.LodgeCount > 0 {
-			return errors.New("must sell all lodges in this color group back to the bank before mortgaging")
-		}
-	}
-
-	// 3. Mutate the state
-	prop.Mortgaged = true
 	return nil
 }
