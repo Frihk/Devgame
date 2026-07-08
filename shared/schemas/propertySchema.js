@@ -1,64 +1,51 @@
-// shared/schemas/playerSchema.js
-
 /**
- * Structural definition and factory template for a Monopoly Player.
- * Keeps Go structures and Frontend models in perfect alignment.
+ * @typedef {Object} PropertyState
+ * @property {number} propertyId - Primary key equal to its fixed boardPosition (0-39)
+ * @property {number} boardPosition - Always equal to propertyId for rendering ease
+ * @property {string} squareType - Restricted to 'property' | 'transport_hub' | 'utility'
+ * @property {string|null} ownerId - Unique identifier of holding player, or null if unowned
+ * @property {boolean} mortgaged - True if the property is currently under mortgage
+ * @property {number} lodgeCount - 0-4, where 4 = Luxury Resort tier. Only for 'property' type.
+ * @property {string|null} lockedByDealId - Set while attached to a pending trade deal
  */
-export const playerSchema = {
-  id: "string",           // Unique Identifier (e.g., UUID or Guest ID)
-  name: "string",         // Display Name / Reddit Username
-  color: "string",        // Hex Code value (e.g., #FF4500)
-  piece: "string",        // Token type choice (e.g., 'alien', 'doge')
-  money: "number",        // Current cash balance 
-  position: "number",     // Current board tile index (0 to 39)
-  inJail: "boolean",      // True if player is trapped in jail
-  jailTurns: "number",    // Counter for how many turns spent in jail
-  hasGetOutofJailCard: "boolean", 
-  isBankrupt: "boolean",  // True if player has dropped out of match
-  propertiesOwned: "array", // Array of strings (Property/Tile IDs)
+
+export const propertySchema = {
+  propertyId: "number",
+  boardPosition: "number",
+  squareType: "string",
+  ownerId: "string",
+  mortgaged: "boolean",
+  lodgeCount: "number",
+  lockedByDealId: "string"
 };
 
 /**
- * Creates a default structured Player Instance object.
- * Useful for mocking players in tests or initializing new players in lobbies.
- * * @param {Object} partialData - Override values to set upon instantiation
- * @returns {Object} A fully formatted default player object
+ * Factory to safely seed an initial default Property State structure.
+ * @param {Object} partialData 
+ * @returns {PropertyState}
  */
-export function createPlayerInstance(partialData = {}) {
+export function createPropertyInstance(partialData = {}) {
+  const id = typeof partialData.propertyId === 'number' ? partialData.propertyId : 0;
   return {
-    id: partialData.id || "",
-    name: partialData.name || "Anonymous Redditor",
-    color: partialData.color || "#FF4500", // Reddit Orange
-    piece: partialData.piece || "alien",
-    money: typeof partialData.money === 'number' ? partialData.money : 1500, // Classic starting cash
-    position: partialData.position || 0, // Starts at GO (index 0)
-    inJail: partialData.inJail || false,
-    jailTurns: partialData.jailTurns || 0,
-    hasGetOutofJailCard: partialData.hasGetOutofJailCard || false,
-    isBankrupt: partialData.isBankrupt || false,
-    propertiesOwned: Array.isArray(partialData.propertiesOwned) ? partialData.propertiesOwned : [],
-    ...partialData // Catch-all for any custom properties passed dynamically
+    propertyId: id,
+    boardPosition: id,
+    squareType: partialData.squareType || "property",
+    ownerId: partialData.ownerId || null,
+    mortgaged: partialData.mortgaged || false,
+    lodgeCount: typeof partialData.lodgeCount === 'number' ? partialData.lodgeCount : 0,
+    lockedByDealId: partialData.lockedByDealId || null,
+    ...partialData
   };
 }
 
 /**
- * Runtime validator to safely parse and confirm if an incoming server 
- * packet matches the structural player requirement rules.
- * * @param {Object} obj - The object to validate
- * @returns {boolean} True if object structure contains mandatory base keys
+ * Validates incoming property payloads from the WebSocket stream.
+ * @param {Object} obj 
+ * @returns {boolean}
  */
-export function validatePlayerStructure(obj) {
+export function validatePropertyStructure(obj) {
   if (!obj || typeof obj !== 'object') return false;
   
-  const requiredKeys = ['id', 'name', 'money', 'position', 'isBankrupt'];
+  const requiredKeys = ['propertyId', 'boardPosition', 'squareType', 'mortgaged'];
   return requiredKeys.every(key => Object.prototype.hasOwnProperty.call(obj, key));
 }
-
-// Default export wrapper containing all modules
-const playerSchemaBundle = {
-  schema: playerSchema,
-  create: createPlayerInstance,
-  validate: validatePlayerStructure
-};
-
-export default playerSchemaBundle;
