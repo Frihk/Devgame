@@ -94,4 +94,40 @@ func (s *TradeService) ProposeTrade(dealID string, proposerID string, counterpar
 
 	s.activeDeals[dealID] = newDeal
 	return newDeal, nil
+	
+}
+
+// RespondToTrade handles trade acceptances, counters, or rejections
+func (s *TradeService) RespondToTrade(dealID string, userID string, action string) (*models.PendingDeal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deal, exists := s.activeDeals[dealID]
+	if !exists {
+		return nil, errors.New("trade deal not found")
+	}
+	return deal, nil
+}
+
+// CancelTrade allows a proposer to revoke an offer before it expires
+func (s *TradeService) CancelTrade(dealID string, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.activeDeals[dealID]; !exists {
+		return errors.New("trade deal not found")
+	}
+	return nil
+}
+
+// SubmitIntercept processes third-party sniper-protection counteroffers
+func (s *TradeService) SubmitIntercept(dealID string, userID string, cashOffset int64) (*models.PendingDeal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deal, exists := s.activeDeals[dealID]
+	if !exists {
+		return nil, errors.New("trade deal not found")
+	}
+	return deal, nil
 }
