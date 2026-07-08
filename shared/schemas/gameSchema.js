@@ -1,22 +1,3 @@
-// shared/schemas/gameSchema.js
-//
-// Mirrors backend/internal/models/game.go -> GameState.
-// This is the shape of the full game-state object embedded in a full
-// state-sync broadcast. Not every WS event includes the full object --
-// see docs/ARCHITECTURE.md Section 6 for the event catalog -- but any
-// client reconciling from a full resync (e.g. after reconnect) should
-// expect exactly this shape.
-//
-// Kept as JSDoc typedefs rather than a runtime validation library so
-// there's zero added dependency risk for the hackathon timeline. If you
-// want runtime validation later, these typedefs translate directly to a
-// zod/io-ts schema without changing field names.
-//
-// UNITS: every cash/price/rent field in this file is a whole Ksh amount
-// (matches the rulebook's Ksh 15,000 / Ksh 2,000 figures directly) --
-// there are no minor units (no cents-equivalent). Do not multiply or
-// divide by 100 anywhere in the pipeline.
-
 /**
  * @typedef {Object} GameState
  * @property {string} id
@@ -92,3 +73,30 @@
  */
 
 export const GAME_SCHEMA_VERSION = 2;
+
+/**
+ * Factory to safely seed an initial default Game State structure 
+ * for frontend state management before the server performs its first sync.
+ * @param {Partial<GameState>} partialData 
+ * @returns {GameState}
+ */
+export function createGameInstance(partialData = {}) {
+  return {
+    id: partialData.id || "",
+    status: partialData.status || "LOBBY",
+    winCondition: partialData.winCondition || "LAST_MAN_STANDING",
+    seq: partialData.seq || 0,
+    turn: {
+      turnId: "",
+      activePlayerId: "",
+      phase: "ROLL",
+      doublesCount: 0,
+      timerExpiresAt: 0,
+      ...partialData.turn
+    },
+    players: Array.isArray(partialData.players) ? partialData.players : [],
+    properties: Array.isArray(partialData.properties) ? partialData.properties : [],
+    pendingDeal: partialData.pendingDeal || null,
+    pendingAuction: partialData.pendingAuction || null,
+  };
+}
