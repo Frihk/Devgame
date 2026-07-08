@@ -1,0 +1,7 @@
+
+# frontend
+frontend/node_modules
+
+# backend
+backend/database/monopoly.db
+
