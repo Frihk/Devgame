@@ -1,7 +1,7 @@
 // frontend/src/scene/GameScene.js
 
 import Phaser from "phaser";
-import GameConfig from "../config/GameConfig";
+import GameConfig from "../config/GameConfig.js";
 import TurnManager from "../manager/TurnManager";
 import EconomyManager from "../manager/EconomyManager";
 import EventManager from "../manager/EventManager";
