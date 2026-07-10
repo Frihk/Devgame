@@ -1,34 +1,72 @@
 // src/config/GameConfig.js
 import Phaser from 'phaser';
 import GameScene from '../scenes/GameScene.js';
+
 /**
- * Global Phaser Game Engine configuration.
- * Configures canvas scaling, rendering engines, and boots game scenes.
+ * Global Consolidated Game Engine & API Configuration.
  */
 export const GameConfig = {
-  type: Phaser.AUTO, // Automatically choices WebGL or Canvas based on device capability
-  width: 1200,       // Baseline coordinate width for the board game layout
-  height: 800,       // Baseline coordinate height
-  parent: 'game-container', // Ties the canvas to an HTML element with id="game-container"
-  backgroundColor: '#1a1a1a', // Sleek dark mode background matching modern gaming UIs
+  // --- Phaser Specific Engine Attributes ---
+  type: Phaser.AUTO, 
+  width: 1200,       
+  height: 800,       
+  parent: 'game-container', 
+  backgroundColor: '#1a1a1a', 
   
   scale: {
-    mode: Phaser.Scale.FIT, // Auto-scales the game canvas to fit parent dimensions
-    autoCenter: Phaser.Scale.CENTER_BOTH // Keeps the board centered horizontally and vertically
+    mode: Phaser.Scale.FIT, 
+    autoCenter: Phaser.Scale.CENTER_BOTH 
   },
 
   physics: {
-    default: 'arcade', // Arcade physics engine included for moving tokens/dice animations
+    default: 'arcade', 
     arcade: {
-      debug: false, // Turn on true during local debugging to see bounding boxes
-      gravity: { y: 0 } // Overhead board games don't require down-pulling gravity
+      debug: false, 
+      gravity: { y: 0 } 
     }
   },
 
-  // Registers scenes to the Phaser runner framework
-  // GameScene will be booted automatically as the primary scene
-  scene: [GameScene]
+  scene: [GameScene],
+
+  // --- Network API Rest Endpoints & State Sync Settings ---
+  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || "http://localhost:8080", // Pointed to your Go API port
+
+  match: {
+    maxPlayers: 4,
+    minPlayersToStart: 2,
+    durationMs: 180000, 
+    turnTimeoutMs: 15000,
+  },
+
+  dice: {
+    sides: 6,
+    minRoll: 1,
+    maxRoll: 6,
+  },
+
+  board: {
+    tileCount: 16, // Mini hackathon layout
+  },
+
+  tileTypes: {
+    business: "business",
+    ownedIncome: "income",
+    event: "event",
+    challenge: "challenge",
+  },
+
+  actions: {
+    buy: "buy",
+    upgrade: "upgrade",
+    skip: "skip",
+    collect: "collect",
+    resolveEvent: "draw_event",
+  },
+
+  client: {
+    stateRefreshMs: 500,
+  },
 };
 
-// CRITICAL: This fixes the default export error appearing in your browser console!
+// Fixed default export for main.js and GameScene.js linkage
 export default GameConfig;
