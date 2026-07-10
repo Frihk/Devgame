@@ -8,7 +8,7 @@ export const GameConfig = {
   // --- Phaser Specific Engine Attributes ---
   type: Phaser.AUTO, 
   width: 1200,       
-  height: 800,       
+  height: 750,       
   parent: 'game-container', 
   backgroundColor: '#1a1a1a', 
   
