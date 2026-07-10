@@ -1,6 +1,5 @@
 // src/config/GameConfig.js
 import Phaser from 'phaser';
-import GameScene from '../scenes/GameScene.js';
 
 /**
  * Global Consolidated Game Engine & API Configuration.
@@ -26,10 +25,11 @@ export const GameConfig = {
     }
   },
 
-  scene: [GameScene],
+  // LEAVE THIS EMPTY HERE TO BREAK THE CIRCULAR DEPENDENCY LOOP!
+  scene: [],
 
   // --- Network API Rest Endpoints & State Sync Settings ---
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || "http://localhost:8080", // Pointed to your Go API port
+  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || "http://localhost:8080",
 
   match: {
     maxPlayers: 4,
@@ -45,7 +45,7 @@ export const GameConfig = {
   },
 
   board: {
-    tileCount: 16, // Mini hackathon layout
+    tileCount: 16, 
   },
 
   tileTypes: {
@@ -68,5 +68,4 @@ export const GameConfig = {
   },
 };
 
-// Fixed default export for main.js and GameScene.js linkage
 export default GameConfig;
