@@ -47,32 +47,23 @@ export default class LobbyScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    const btnW = 240;
-    const btnH = 52;
-
     const mkButton = (y, label, onClick) => {
-      const container = this.add.container(width / 2, y);
-
       const bg = this.add
-        .rectangle(0, 0, btnW, btnH, 0x121a33, 0.95)
-        .setStrokeStyle(2, 0x5eead4, 0.8);
+        .rectangle(width / 2, y, 240, 52, 0x121a33, 0.95)
+        .setStrokeStyle(2, 0x5eead4, 0.8)
+        .setInteractive({ useHandCursor: true });
 
       const txt = this.add
-        .text(0, 0, label, {
+        .text(width / 2, y, label, {
           fontFamily: "Arial",
           fontSize: "18px",
           color: "#e9eefc",
         })
         .setOrigin(0.5);
 
-      container.add([bg, txt]);
+      bg.on("pointerup", onClick);
 
-      container.setSize(btnW, btnH);
-      container.setInteractive(new Phaser.Geom.Rectangle(-btnW / 2, -btnH / 2, btnW, btnH), Phaser.Geom.Rectangle.Contains);
-
-      container.on("pointerup", () => onClick?.());
-
-      return container;
+      return bg;
     };
 
     this.ui.startButton = mkButton(height / 2 + 90, "Start Match", async () => {

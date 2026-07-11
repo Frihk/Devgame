@@ -82,7 +82,7 @@ export default class GameScene extends Phaser.Scene {
   // Server bootstrap + polling
   // -----------------------------
   async _bootstrapFromServer() {
-    const baseUrl = GameConfig.apiBaseUrl;
+    const baseUrl = GameConfig.apiBaseUrl || "http://localhost:8080";
     this.api = {
       async post(path, body) {
         const res = await fetch(`${baseUrl}${path}`, {
