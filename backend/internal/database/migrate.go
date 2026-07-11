@@ -53,6 +53,26 @@ var schemaStatements = []string{
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (game_id, seq)
 	)`,
+
+	// players: added to unblock PlayerRepository/LeaderboardRepository.
+	// Identity assumption: `id` is whatever PlayerID string the client
+	// already carries (currently mockAuthService's `username + "_id"`,
+	// see cmd/server/main.go). If that assumption is wrong -- e.g. you
+	// want real accounts with separate auth -- this table's `id` column
+	// is still the right shape, just fed by a different upstream source.
+	`CREATE TABLE IF NOT EXISTS players (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		games_played   INTEGER NOT NULL DEFAULT 0,
+		wins           INTEGER NOT NULL DEFAULT 0,
+		best_net_worth INTEGER NOT NULL DEFAULT 0,
+		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`,
+
+	// Leaderboard queries always sort by wins first, net worth second --
+	// this index is what makes GetTop a lookup instead of a full scan.
+	`CREATE INDEX IF NOT EXISTS idx_players_wins_networth
+		ON players(wins DESC, best_net_worth DESC)`,
 }
 
 // Migrate applies the schema above. Safe to call on every server boot --
