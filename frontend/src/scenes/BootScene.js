@@ -34,6 +34,6 @@ export default class BootScene extends Phaser.Scene {
 
   create() {
     // Make sure textures/graphics are ready; then start the game.
-    this.scene.start("GameScene");
+    this.scene.start("AuthScene");
   }
 }

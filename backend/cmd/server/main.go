@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"Devgame/backend/internal/handlers"
 	"Devgame/backend/internal/middleware"
@@ -69,9 +71,26 @@ func main() {
 	// WebSocket Endpoint
 	mux.HandleFunc("GET /ws/game/{roomID}", middleware.WSUpgradeHandler(registry))
 
+	// Serve built frontend
+	frontendDirs := []string{"frontend/dist", "../frontend/dist"}
+	var staticDir string
+	for _, d := range frontendDirs {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			staticDir, _ = filepath.Abs(d)
+			break
+		}
+	}
+	if staticDir != "" {
+		fs := http.FileServer(http.Dir(staticDir))
+		mux.Handle("/", fs)
+		log.Printf("Serving frontend from %s", staticDir)
+	} else {
+		log.Println("No built frontend found at frontend/dist — run 'npm run build' in frontend/")
+	}
+
 	port := ":8080"
 	log.Printf("Starting server on port %s", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
+	if err := http.ListenAndServe(port, middleware.CORS(mux)); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

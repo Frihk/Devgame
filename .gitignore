@@ -1,7 +1,12 @@
 
 # frontend
 frontend/node_modules
+frontend/dist
 
 # backend
 backend/database/monopoly.db
+backend/database/monopoly.db-shm
+backend/database/monopoly.db-wal
+backend/server
+/server
 
