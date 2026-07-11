@@ -21,4 +21,7 @@ func RegisterRoutes(
 	mux.HandleFunc("GET /player/{id}", handlers.GetPlayerProfileHandler(playerSvc))
 	mux.HandleFunc("POST /lobby/create", handlers.CreateLobbyHandler(registry))
 	mux.HandleFunc("POST /lobby/{id}/join", handlers.JoinLobbyHandler(registry))
+	mux.HandleFunc("POST /api/games", handlers.CreateLobbyHandler(registry))
+	mux.HandleFunc("POST /api/games/{id}/join", handlers.JoinLobbyHandler(registry))
+	mux.HandleFunc("GET /api/games/{id}", handlers.GetGameStateHandler(registry))
 }

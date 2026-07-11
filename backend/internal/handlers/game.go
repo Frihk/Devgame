@@ -13,6 +13,7 @@ import (
 // CreateLobbyResponse holds the JSON response payload for lobby creation.
 type CreateLobbyResponse struct {
 	RoomID string `json:"roomId"`
+	GameID string `json:"gameId"`
 }
 
 // JoinLobbyRequest holds the JSON request payload for joining a lobby.
@@ -49,7 +50,7 @@ func CreateLobbyHandler(registry *services.RoomRegistry) http.HandlerFunc {
 		registry.CreateRoom(roomID)
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(CreateLobbyResponse{RoomID: roomID})
+		json.NewEncoder(w).Encode(CreateLobbyResponse{RoomID: roomID, GameID: roomID})
 	}
 }
 
@@ -90,6 +91,36 @@ func JoinLobbyHandler(registry *services.RoomRegistry) http.HandlerFunc {
 			RoomID: roomID,
 			Token:  req.PlayerID,
 		})
+	}
+}
+
+// GetGameStateHandler handles GET /api/games/{id}.
+func GetGameStateHandler(registry *services.RoomRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		roomID := r.PathValue("id")
+		if roomID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Game ID is required"})
+			return
+		}
+
+		room, ok := registry.GetRoom(roomID)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Game not found"})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if room.State != nil {
+			json.NewEncoder(w).Encode(room.State)
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":     roomID,
+				"status": "lobby",
+			})
+		}
 	}
 }
 

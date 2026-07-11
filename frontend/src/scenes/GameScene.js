@@ -82,10 +82,10 @@ export default class GameScene extends Phaser.Scene {
   // Server bootstrap + polling
   // -----------------------------
   async _bootstrapFromServer() {
-    this.apiBaseUrl = GameConfig.apiBaseUrl;
+    const baseUrl = GameConfig.apiBaseUrl;
     this.api = {
       async post(path, body) {
-        const res = await fetch(`${this.apiBaseUrl}${path}`, {
+        const res = await fetch(`${baseUrl}${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: body ? JSON.stringify(body) : undefined,
@@ -94,7 +94,7 @@ export default class GameScene extends Phaser.Scene {
         return await res.json();
       },
       async get(path) {
-        const res = await fetch(`${this.apiBaseUrl}${path}`);
+        const res = await fetch(`${baseUrl}${path}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
       },
