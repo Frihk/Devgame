@@ -1,6 +1,8 @@
 // Package repository contains SQL query logic against the schema
 // defined in internal/database. Nothing in here knows about game rules
 // -- it only translates between Go values and rows. See docs/DATABASE.md.
+// meaning of 'repository' in database terms -> a place where things are stored and can be retrieved
+
 package repository
 
 import (
