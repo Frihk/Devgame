@@ -7,6 +7,9 @@ frontend/dist
 backend/database/monopoly.db
 backend/database/monopoly.db-shm
 backend/database/monopoly.db-wal
+
 backend/server
 /server
 
+# backend binaries
+backend/server
