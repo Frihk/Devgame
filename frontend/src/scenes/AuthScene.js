@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import GameConfig from "../config/GameConfig";
 
 const API_BASE = GameConfig.apiBaseUrl;
+const SESSION_DURATION = 6 * 60 * 60 * 1000;
 
 export default class AuthScene extends Phaser.Scene {
   constructor() {
@@ -13,6 +14,17 @@ export default class AuthScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
     this.cameras.main.setBackgroundColor(0x0b1020);
+
+    const token = localStorage.getItem("token");
+    const sessionTime = localStorage.getItem("sessionTime");
+    if (token && sessionTime && Date.now() - Number(sessionTime) < SESSION_DURATION) {
+      this.scene.start("MenuScene");
+      return;
+    }
+
+    localStorage.removeItem("token");
+    localStorage.removeItem("playerId");
+    localStorage.removeItem("sessionTime");
 
     const formContainer = this.add.dom(width / 2, height / 2).createFromHTML(this._formHTML());
     this._formElements = formContainer;
@@ -187,6 +199,7 @@ export default class AuthScene extends Phaser.Scene {
       if (this.isLogin) {
         localStorage.setItem("token", data.token);
         localStorage.setItem("playerId", data.playerId);
+        localStorage.setItem("sessionTime", String(Date.now()));
       } else {
         // After register, switch to login
         this.isLogin = true;
