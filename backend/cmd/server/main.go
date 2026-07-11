@@ -8,6 +8,7 @@ import (
 	"Devgame/backend/internal/middleware"
 	"Devgame/backend/internal/routes"
 	"Devgame/backend/internal/services"
+	"Devgame/backend/internal/database"
 )
 
 // mockAuthService provides mock auth operations for development compiling/testing.
@@ -47,6 +48,21 @@ func (s *mockPlayerService) GetProfile(playerID string) (*handlers.PlayerProfile
 }
 
 func main() {
+
+	// let's begin with opening a database connection
+	// if it fails, quit immmediately
+	db, err := database.Open(database.Config{Path: "database/monopoly.db"})
+	if err != nil {
+		log.Println("failed to open database connection: ", err)
+		return
+	}
+	//then we'll run our migration to crate the schema for tables
+	// if it fails, quit immediately
+	if err := database.Migrate(db); err != nil {
+		log.Println("failed to run migrations: ", err)
+		return
+	}
+	
 	registry := services.NewRoomRegistry()
 
 	// Instantiate mock services for development.
