@@ -1,0 +1,111 @@
+/* UI Overlay specific styles */
+.ui-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* Let clicks pass through to Phaser by default */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-family: 'Inter', sans-serif;
+}
+
+.ui-overlay > * {
+  pointer-events: auto; /* Enable clicks on actual UI elements */
+}
+
+/* Premium Styling for HUD and Roster */
+.top-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 20px;
+}
+
+.bottom-bar {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+}
+
+.roster-container {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 16px 24px;
+  color: white;
+  min-width: 250px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.roster-container h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #94a3b8;
+}
+
+.roster-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.roster-item:last-child {
+  border-bottom: none;
+}
+
+.roster-name { font-weight: 600; }
+.roster-cash { color: #38ef7d; font-weight: 700; }
+
+.hud-container {
+  background: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  padding: 20px 32px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+  transform: translateY(-20px);
+}
+
+.hud-profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hud-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2bc0e4, #eaecc6);
+  border: 3px solid white;
+  box-shadow: 0 0 15px rgba(43, 192, 228, 0.5);
+}
+
+.hud-details h2 {
+  margin: 0 0 4px 0;
+  font-size: 24px;
+}
+
+.hud-cash {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  color: #38ef7d;
+}
+
+.hud-waiting {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 16px;
+}

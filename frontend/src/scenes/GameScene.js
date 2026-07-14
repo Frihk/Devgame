@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Board } from '../board/Board.js';
+import { EventBridge } from '../utils/EventBridge.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -27,8 +28,18 @@ export class GameScene extends Phaser.Scene {
 
     this.board = new Board(this);
 
-    // this.hudOverlay = this.add.dom(0, 0).createFromCache('hudUI');
-    // this.hudOverlay.setOrigin(0, 0);
+    // Emit event when Phaser canvas is clicked
+    this.input.on('pointerdown', () => {
+      EventBridge.emit('PHASER_CLICKED', { time: Date.now() });
+    });
+
+    // Listen to React events
+    EventBridge.on('REACT_CLICKED', (data) => {
+      console.log('Phaser received event from React:', data.message);
+      // Change background color temporarily as visual feedback
+      this.cameras.main.setBackgroundColor('#ff0000');
+      setTimeout(() => this.cameras.main.setBackgroundColor('#000000'), 500);
+    });
 
     this.setupUIListeners();
   }
