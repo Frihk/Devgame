@@ -4,6 +4,37 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Wekonomy</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: #000;
+      }
+      .premium-btn {
+        padding: 15px 40px;
+        font-family: 'Inter', sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        color: white;
+        background: linear-gradient(135deg, #e94560, #ff6b6b);
+        border: none;
+        border-radius: 30px;
+        cursor: pointer;
+        box-shadow: 0 10px 20px rgba(233, 69, 96, 0.4);
+        transition: transform 0.2s, box-shadow 0.2s;
+      }
+      .premium-btn:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 15px 25px rgba(233, 69, 96, 0.6);
+      }
+      .premium-btn:active {
+        transform: translateY(1px);
+      }
+    </style>
   </head>
   <body>
     <div id="game-container"></div>
