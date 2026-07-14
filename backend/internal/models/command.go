@@ -7,6 +7,7 @@ type Command struct {
 	PlayerID string
 	Type     ActionType      // Matches ActionType from actions.go
 	Payload  json.RawMessage
+	CmdID    string          // Client-generated command ID for ack/error matching
 	Reply    chan Result     // Used for request/response-style acks if needed
 
 	// Internal allows passing non-JSON data for internal actor commands (e.g. socket registration)

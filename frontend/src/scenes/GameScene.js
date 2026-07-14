@@ -20,6 +20,8 @@ import UpgradeModal from "../ui/upgrademodal";
 import Notification from "../ui/notification";
 import CardModal from "../ui/cardmodal";
 import RentModal from "../ui/rentmodal";
+import gameService from "../services/gameService";
+import { PlayerAction } from "../../../shared/enums/playerActions";
 import { drawCard } from "../board/cardData";
 
 const PLAYER_COLORS = [0x5eead4, 0xfbbf24, 0xfb7185, 0x818cf8];
@@ -52,6 +54,13 @@ export default class GameScene extends Phaser.Scene {
     this.pendingCard = null;
     this.lastRollWasDoubles = false;
     this.rolling = false;
+    this.wsUnsub = null;
+  }
+
+  init(data) {
+    if (data?.gameId) this.gameId = data.gameId;
+    if (data?.token) this.token = data.token;
+    this.multiplayer = !!this.gameId;
   }
 
   create() {
@@ -75,7 +84,7 @@ export default class GameScene extends Phaser.Scene {
     this.diceUI = new DiceUI(this);
     this.diceUI.create(
       BOARD_ORIGIN.x + (CELL_SIZE * 11) / 2,
-      BOARD_ORIGIN.y + (CELL_SIZE * 11) / 2,
+      BOARD_ORIGIN.y + (CELL_SIZE * 11) / 2 + 120,
       42
     );
     this.hud = new HUD(this);
@@ -91,9 +100,10 @@ export default class GameScene extends Phaser.Scene {
     this.notification = new Notification(this);
     this.notification.create(
       BOARD_ORIGIN.x + (CELL_SIZE * 11) / 2,
-      BOARD_ORIGIN.y + (CELL_SIZE * 11) / 2 - 10
+      BOARD_ORIGIN.y + (CELL_SIZE * 11) / 2 - 140
     );
     this._setupButtons();
+    this._setupQuitButton();
   }
 
   _setupButtons() {
@@ -127,6 +137,18 @@ export default class GameScene extends Phaser.Scene {
     this.skipBtn = mkBtn('⏭ End Turn', 0x4a1a1a, () => this._onSkip());
 
     [this.rollBtn, this.buyBtn, this.upgradeBtn, this.skipBtn].forEach(b => b.setEnabled(false));
+  }
+
+  _setupQuitButton() {
+    const quitBtn = this.add.text(1280, 10, '✕ Quit', {
+      fontFamily: 'Arial', fontSize: '13px', color: '#fb7185',
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(300);
+
+    quitBtn.on('pointerup', () => {
+      this.scene.start('MenuScene');
+    });
+    quitBtn.on('pointerover', () => quitBtn.setColor('#ff0000'));
+    quitBtn.on('pointerout', () => quitBtn.setColor('#fb7185'));
   }
 
   _buildBoard() {
@@ -473,8 +495,47 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _initGame() {
-    this.notification.push("Starting local demo...");
-    this._runLocalPlaceholder();
+    if (this.multiplayer) {
+      this.notification.push("Connecting to game...");
+      this._connectMultiplayer();
+    } else {
+      this.notification.push("Starting local demo...");
+      this._runLocalPlaceholder();
+    }
+  }
+
+  _connectMultiplayer() {
+    const token = this.token || sessionStorage.getItem("token") || "guest";
+    if (!gameService.socket) {
+      gameService.connect(this.gameId, token);
+    }
+
+    this.wsUnsub = gameService.subscribe((event) => {
+      if (event.type === "state_sync") {
+        const state = event.payload || event;
+        this._applyServerState(state);
+        this._renderFromState();
+      } else if (event.type === "turn_started") {
+        this.state.currentPlayerId = event.payload?.playerId || event.playerId;
+        this._renderFromState();
+      } else if (event.type === "game_ended") {
+        this.state.gameOver = true;
+        this._renderFromState();
+      }
+    });
+
+    gameService.sendAction(PlayerAction.GET_STATE, {}).catch(() => {});
+  }
+
+  _onRemoteDiceRoll(event) {}
+  _onRemotePlayerMoved(event) {
+    const pid = event.payload?.playerId || event.playerId;
+    const pos = event.payload?.position ?? event.payload?.to ?? 0;
+    const player = this.state.playerById[pid];
+    if (player) {
+      player.positionIndex = pos;
+      this._renderPawns();
+    }
   }
 
   async _bootstrapFromServer() {
@@ -752,6 +813,10 @@ export default class GameScene extends Phaser.Scene {
   _onGameOver() {
     this.state.gameOver = true;
     this._renderFromState();
+  }
+
+  shutdown() {
+    if (this.wsUnsub) this.wsUnsub();
   }
 
   _goToResults() {

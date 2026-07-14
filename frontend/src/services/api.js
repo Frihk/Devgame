@@ -7,7 +7,7 @@ const BASE_URL = 'http://localhost:8080/api';
  * Global HTTP request dispatcher with automatic Authorization injection.
  */
 async function request(endpoint, options = {}) {
-  const token = localStorage.getItem('token');
+  const token = sessionStorage.getItem('token');
   
   const headers = {
     'Content-Type': 'application/json',
@@ -29,6 +29,8 @@ async function request(endpoint, options = {}) {
 }
 
 export const apiService = {
+  request: (endpoint, options) => request(endpoint, options),
+
   // Authentication Actions
   login: (credentials) => request('/auth/login', { method: 'POST', body: JSON.stringify(credentials) }),
   register: (userData) => request('/auth/register', { method: 'POST', body: JSON.stringify(userData) }),

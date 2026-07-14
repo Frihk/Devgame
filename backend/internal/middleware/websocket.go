@@ -50,6 +50,7 @@ func (c *WSClient) readPump() {
 		var env struct {
 			Type    models.ActionType `json:"type"`
 			Payload json.RawMessage   `json:"payload"`
+			CmdID   string            `json:"cmdId"`
 		}
 		if err := json.Unmarshal(message, &env); err != nil {
 			log.Printf("Invalid message format from %s: %v", c.PlayerID, err)
@@ -61,6 +62,7 @@ func (c *WSClient) readPump() {
 			PlayerID: c.PlayerID,
 			Type:     env.Type,
 			Payload:  env.Payload,
+			CmdID:    env.CmdID,
 		}
 	}
 }

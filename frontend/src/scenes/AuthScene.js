@@ -15,16 +15,16 @@ export default class AuthScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.cameras.main.setBackgroundColor(0x0b1020);
 
-    const token = localStorage.getItem("token");
-    const sessionTime = localStorage.getItem("sessionTime");
+    const token = sessionStorage.getItem("token");
+    const sessionTime = sessionStorage.getItem("sessionTime");
     if (token && sessionTime && Date.now() - Number(sessionTime) < SESSION_DURATION) {
       this.scene.start("MenuScene");
       return;
     }
 
-    localStorage.removeItem("token");
-    localStorage.removeItem("playerId");
-    localStorage.removeItem("sessionTime");
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("playerId");
+    sessionStorage.removeItem("sessionTime");
 
     const formContainer = this.add.dom(width / 2, height / 2).createFromHTML(this._formHTML());
     this._formElements = formContainer;
@@ -197,9 +197,9 @@ export default class AuthScene extends Phaser.Scene {
       }
 
       if (this.isLogin) {
-        localStorage.setItem("token", data.token);
-        localStorage.setItem("playerId", data.playerId);
-        localStorage.setItem("sessionTime", String(Date.now()));
+        sessionStorage.setItem("token", data.token);
+        sessionStorage.setItem("playerId", data.playerId);
+        sessionStorage.setItem("sessionTime", String(Date.now()));
       } else {
         // After register, switch to login
         this.isLogin = true;

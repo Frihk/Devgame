@@ -1,128 +1,134 @@
 import Phaser from "phaser";
 import GameConfig from "../config/GameConfig";
+import gameService from "../services/gameService";
+import { PlayerAction } from "../../../shared/enums/playerActions";
 
 export default class LobbyScene extends Phaser.Scene {
   constructor() {
     super("LobbyScene");
-    this.api = null;
     this.gameId = null;
-
-    this.ui = {
-      titleText: null,
-      statusText: null,
-      playersText: null,
-      startButton: null,
-      rollOverButton: null,
-    };
+    this.players = [];
+    this.isHost = false;
+    this.unsub = null;
   }
-
-  preload() {}
 
   create() {
     const { width, height } = this.scale;
     this.cameras.main.setBackgroundColor(0x0b1020);
 
-    this.ui.titleText = this.add
-      .text(width / 2, height / 2 - 160, "Monopoly Devgame", {
-        fontFamily: "Arial",
-        fontSize: "34px",
-        color: "#e9eefc",
-      })
-      .setOrigin(0.5, 0);
+    this.add.text(width / 2, height / 2 - 160, "Monopoly Devgame", {
+      fontFamily: "Arial", fontSize: "34px", color: "#e9eefc",
+    }).setOrigin(0.5, 0);
 
-    this.ui.statusText = this.add
-      .text(width / 2, height / 2 - 110, "Starting lobby...", {
-        fontFamily: "Arial",
-        fontSize: "16px",
-        color: "#5eead4",
-      })
-      .setOrigin(0.5, 0);
+    this.statusText = this.add.text(width / 2, height / 2 - 110, "Setting up...", {
+      fontFamily: "Arial", fontSize: "16px", color: "#5eead4",
+    }).setOrigin(0.5, 0);
 
-    this.ui.playersText = this.add
-      .text(width / 2, height / 2 - 60, "Players: (waiting)", {
-        fontFamily: "Arial",
-        fontSize: "16px",
-        color: "#7f8bb3",
-        align: "center",
-      })
-      .setOrigin(0.5, 0);
+    this.roomIdText = this.add.text(width / 2, height / 2 - 80, "", {
+      fontFamily: "Arial", fontSize: "14px", color: "#7f8bb3",
+    }).setOrigin(0.5, 0);
 
-    const mkButton = (y, label, onClick) => {
-      const bg = this.add
-        .rectangle(width / 2, y, 240, 52, 0x121a33, 0.95)
-        .setStrokeStyle(2, 0x5eead4, 0.8)
+    this.playerListText = this.add.text(width / 2, height / 2 - 30, "", {
+      fontFamily: "Arial", fontSize: "15px", color: "#e9eefc", align: "center",
+    }).setOrigin(0.5, 0);
+
+    const mkBtn = (y, label, color, onClick) => {
+      const bg = this.add.rectangle(width / 2, y, 240, 52, color, 0.9)
+        .setStrokeStyle(2, 0xffffff, 0.15)
         .setInteractive({ useHandCursor: true });
-
-      const txt = this.add
-        .text(width / 2, y, label, {
-          fontFamily: "Arial",
-          fontSize: "18px",
-          color: "#e9eefc",
-        })
-        .setOrigin(0.5);
-
+      const txt = this.add.text(width / 2, y, label, {
+        fontFamily: "Arial", fontSize: "18px", color: "#ffffff",
+      }).setOrigin(0.5);
       bg.on("pointerup", onClick);
-
-      return bg;
+      bg.on("pointerover", () => bg.setFillStyle(color, 1));
+      bg.on("pointerout", () => bg.setFillStyle(color, 0.9));
+      return { bg, txt };
     };
 
-    this.ui.startButton = mkButton(height / 2 + 90, "Start Match", async () => {
-      await this._createAndStartMatch();
+    this.startBtn = mkBtn(height / 2 + 90, "Start Match", 0x1a5a5a, () => {
+      if (this.isHost && this.players.length >= 2) this._startMatch();
     });
 
-    this.ui.rollOverButton = mkButton(height / 2 + 160, "Quick Demo (Local)", () => {
-      this._startLocalDemo();
+    mkBtn(height / 2 + 160, "Quick Demo (Local)", 0x2a2a4a, () => {
+      gameService.disconnect();
+      this.scene.start("GameScene", { gameId: null });
     });
 
-    this._initApi();
-    this._renderLocalWaitHint();
+    this._createLobby();
   }
 
-  async _createAndStartMatch() {
+  async _createLobby() {
+    const baseUrl = GameConfig.apiBaseUrl;
+    const playerName = sessionStorage.getItem("playerId") || "guest";
+
     try {
-      this.ui.statusText.setText("Creating match...");
-      const created = await this.api.post("/api/games", {
-        match: { durationMs: GameConfig.match.durationMs, board: { tileCount: GameConfig.board.tileCount } },
+      const created = await fetch(`${baseUrl}/lobby/create`, { method: "POST" });
+      if (!created.ok) throw new Error("HTTP " + created.status);
+      const data = await created.json();
+      this.gameId = data.roomId || data.gameId;
+      this.isHost = true;
+
+      await fetch(`${baseUrl}/lobby/${this.gameId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: playerName, playerId: playerName }),
       });
 
-      this.gameId = created?.gameId ?? created?.id ?? created?.game?.id;
-      if (!this.gameId) throw new Error("No gameId returned");
-
-      await this.api.post(`/api/games/${this.gameId}/join`, {
-        name: `Host ${Math.floor(Math.random() * 999)}`,
-      });
-
-      this.ui.statusText.setText("Starting...");
-      this.scene.start("GameScene", { gameId: this.gameId });
+      this.roomIdText.setText(`Room: ${this.gameId}`);
+      this.statusText.setText("Connecting...");
+      this.players = [playerName];
+      this._renderPlayers();
+      this._connectWS();
     } catch (e) {
-      this.ui.statusText.setText("Server unavailable. Starting local demo...");
-      this._startLocalDemo();
+      this.statusText.setText("Server offline. Use Quick Demo instead.");
     }
   }
 
-  _startLocalDemo() {
-    this.scene.start("GameScene", { gameId: null });
+  _connectWS() {
+    gameService.disconnect();
+    const token = sessionStorage.getItem("playerId") || "guest";
+    gameService.connect(this.gameId, token);
+
+    this.unsub = gameService.subscribe((event) => {
+      if (event.type === "player_connected") {
+        const pid = event.payload?.playerId || event.playerId;
+        if (pid && !this.players.includes(pid)) {
+          this.players.push(pid);
+          this._renderPlayers();
+        }
+      } else if (event.type === "player_disconnected") {
+        const pid = event.payload?.playerId || event.playerId;
+        this.players = this.players.filter(p => p !== pid);
+        this._renderPlayers();
+      } else if (event.type === "game_started") {
+        this.scene.start("GameScene", { gameId: this.gameId });
+      }
+    });
+
+    this.statusText.setText("Waiting for players...");
   }
 
-  _initApi() {
-    const apiBaseUrl = GameConfig.apiBaseUrl;
-
-    this.api = {
-      async post(path, body) {
-        const res = await fetch(`${apiBaseUrl}${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-      },
-    };
+  _renderPlayers() {
+    const list = this.players.length
+      ? this.players.map((p, i) => `${i + 1}. ${p}`).join("\n")
+      : "(waiting for players...)";
+    this.playerListText.setText(`Players in room:\n${list}`);
+    const enabled = this.isHost && this.players.length >= 2;
+    this.startBtn.bg.setAlpha(enabled ? 1 : 0.35);
+    this.startBtn.txt.setAlpha(enabled ? 1 : 0.35);
   }
 
-  _renderLocalWaitHint() {
-    const needed = GameConfig.match.minPlayersToStart;
-    const max = GameConfig.match.maxPlayers;
-    this.ui.playersText.setText(`Players: waiting for ${needed}-${max} players`);
+  _startMatch() {
+    this.statusText.setText("Starting game...");
+    gameService.sendAction(PlayerAction.START_GAME, {}).then(() => {}).catch(() => {
+      this.statusText.setText('Server unreachable. Starting local demo...');
+      this.time.delayedCall(1500, () => {
+        this.scene.start('GameScene', { gameId: null });
+      });
+    });
+  }
+
+  shutdown() {
+    if (this.unsub) this.unsub();
   }
 }

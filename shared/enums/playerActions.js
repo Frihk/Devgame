@@ -36,4 +36,8 @@ export const PlayerAction = Object.freeze({
 
   // Liquidation / raise-cash actions -- rulebook Section 9, addendum Section 2.3
   RAISE_CASH: 'raise_cash',
+
+  // System actions
+  START_GAME: 'start_game',
+  GET_STATE: 'get_state',
 });

@@ -65,6 +65,18 @@ export default class MenuScene extends Phaser.Scene {
       this.scene.start("GameScene", { gameId: null });
     });
 
+    const profileBtn = this.add
+      .text(16, 16, "Profile", {
+        fontFamily: "Arial",
+        fontSize: "14px",
+        color: "#5eead4",
+      })
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    profileBtn.on("pointerup", () => {
+      this.scene.start("ProfileScene");
+    });
+
     const logoutBtn = this.add
       .text(width - 16, 16, "Logout", {
         fontFamily: "Arial",
@@ -74,9 +86,9 @@ export default class MenuScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true });
     logoutBtn.on("pointerup", () => {
-      localStorage.removeItem("token");
-      localStorage.removeItem("playerId");
-      localStorage.removeItem("sessionTime");
+      sessionStorage.removeItem("token");
+      sessionStorage.removeItem("playerId");
+      sessionStorage.removeItem("sessionTime");
       this.scene.start("AuthScene");
     });
   }
